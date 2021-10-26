@@ -1,0 +1,389 @@
+---
+title: "Rand et al - Reanalysis"
+author(s): "Jimmy Narang, Sidharth Satya, Divyansh Saxena"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      message = FALSE, 
+                      warning = FALSE)
+library("tidyverse")
+library("patchwork")
+library("ggthemr")
+
+# Helper Routines
+#----------------
+
+# Use a custom smoothing function
+my_smooth <- geom_smooth(method = "gam", formula = y ~ s(x, k = 3))
+
+# Custom labels for each facet
+my_labeller <- as_labeller(c(`0.693` = "Signal received: TRUE", `-0.693` = "Signal received: FALSE"))
+
+# Function to add a wrapped caption to an image
+#' @param label character string to wrap
+#' @param dev_width numeric value specifying width of current device
+#' @param dev_scaler numeric value to scale dev_width (might be around ~12)
+make_caption <- function(label, dev_scaler = 15, dev_width = dev.size("in")[1]){   
+  paste(strwrap(label, dev_width * dev_scaler), collapse = "\n") 
+}
+
+# Function to convert the results of an if-else to a factor
+bin2fac <- function(condition, true_label, false_label){
+  return(as_factor(if_else(condition, true_label, false_label)))
+}
+
+# Standardize Fig saving
+
+save_fig <- function(fig, filename, fig_path = fig_dir, aspect_ratio = 16/9, ht = 5){
+  filepath = file.path(fig_path, filename)
+  ggsave(plot = fig, filename = filepath, height = ht , width = ht*aspect_ratio)
+}
+
+
+# Themes and colors
+#--------------------
+ggthemr("flat")
+
+# Set theme parameters for figures
+old_theme <- theme_get()
+theme_update(plot.tag.position = "topleft",
+             legend.position = "bottom",
+             plot.caption = element_text(size = 9, hjust = 0))
+
+# Shades of Blue & Red we'll use later
+br = c("#3498db", "#e74c3c")
+
+# Background shade for polarity
+neg_fill <- "#9ecae1"
+
+# define factor labels
+lbl.conc = levels(factor(c(0,1), labels = c("discordant", "concordant")))
+lbl.pol = levels(factor(c(-1,0,1), labels = c("opposing", "neutral", "confirming")))
+```
+
+```{r datain}
+
+# Read in the data
+s1_data <- read_csv("s1_data.csv") %>%
+  filter(across(everything(), ~ !is.na(.x))) %>% # Remove rows that have *any* missing values
+  mutate(
+    #concordance = bin2fac(politically_concordant == 1, "concordant", "discordant"),
+    signal = car::logit(ifelse(signal, 2/3, 1/3)), # Convert the signals to their logit values
+    signal_bin = as_factor(as.character(round(signal, 3))), # signals as factors (for plotting)
+    prior  = car::logit(prior_recode),
+    post   = car::logit(post_recode),
+    polarity = factor(sign(prior)*sign(signal), labels = lbl.pol),
+    bayes_post = prior + signal,
+    st_truth = ifelse(startsWith(statement_type, "False"),FALSE,TRUE), # Whether the story (statement) is true
+    #polarity = bin2fac(prior*signal > 0, "confirming", "disconfirming"),
+    #polarity = factor(polarity, labels = lbl.pol),
+    concordance = factor(politically_concordant, labels = lbl.conc),
+    deviation = post - bayes_post
+    ) %>%
+  rename(ppid = PPID, 
+         st_id = statementID, 
+         st_type = statement_type,
+         crt_score = CRT_sum
+         ) %>%
+  select(ppid, crt_score, starts_with("st_"), signal, signal_bin, capped,
+         prior, post, bayes_post, concordance, polarity, deviation)
+
+s1_data
+
+```
+
+
+```{r fig1}
+
+# Remove extremes
+#s1_data <- s1_data %>% filter(!capped)
+
+# Plot a histogram of priors
+
+f1_base <- s1_data %>% 
+  ggplot(aes(x = prior)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 0, color = "red", linetype = 'dashed') +
+  labs(x = "Priors (log odds ratio)")
+
+# Split plot into a 2x2 grid by (i) concordance (ii) st_truth
+f1_grid <- f1_base + ylim(0,150) +
+  facet_grid(vars(concordance), vars(st_truth), 
+             switch = "y", 
+             labeller = labeller(.cols = label_both, .rows = label_value)) +
+  labs(title = "Distribution of priors by concordance and story truth") 
+   
+# Preview and save
+print(f1_grid)
+#ggsave(file.path(fig_dir,"Fig1.png"))
+```
+
+
+```{r fig_pvp}
+
+signal_names <- list("Signal received: TRUE" = "Signal received: Probably True", "Signal received: FALSE"= "Signal received: Probably False")
+sig_labeller <- function(variable,value){
+  return(signal_names[value])
+}
+
+assign_labels <- function(breaks) {
+  
+  prob = round(boot::inv.logit(breaks[1])*100, 0)
+  labels = c(paste(breaks[1], ' (', prob, '%)', sep=""))
+  
+  for(b in 2:length(breaks))
+  {
+    prob = round(boot::inv.logit(breaks[b])*100, 0)
+    labels <- c(labels, paste(breaks[b], ' (', prob, '%)', sep=""))
+  }
+  return(labels)
+}
+
+
+xbreaks = c(-2,0,2)
+xlabels <- assign_labels(xbreaks)
+
+ybreaks1 = c(-3, -2, -1, 0, 1, 2, 3)
+ylabels1 <- assign_labels(ybreaks1)
+
+# provide a lower bound and an upper bound on the percentages you want to show
+get_percent_breaks <- function(lower_lim, upper_lim) {
+  # add the first two log odds probs 
+  breaks <- c(-3, -2)
+  upper_iteration = ((upper_lim-lower_lim)*10)
+  
+  # add the percentage log odds
+  for(i in 0:upper_iteration) { 
+    breaks <- c(breaks, round(boot::logit((lower_lim+0.1*i)), 1))
+  }
+  
+  # add the last two log odds probs
+  breaks <- c(breaks, 2, 3)
+  
+  return(breaks)
+}
+
+ybreaks2 <- get_percent_breaks(0.2, 0.8)
+ylabels2 <- assign_labels(ybreaks2)
+
+# Build the Posterior vs. Prior figure, step by step
+pvp_1 <- s1_data %>%
+  ggplot(aes(x = prior, y = post)) +
+  scale_y_continuous(
+    name = "posterior (log odds)",
+    limits = c(-3,3),
+    breaks = ybreaks2,
+    labels = ylabels2
+  ) + 
+  scale_x_continuous(
+    name = "prior (log odds)",
+    limits = c(-3,3), 
+    breaks = xbreaks,
+    labels = xlabels
+  ) + 
+  facet_wrap(facets = vars(signal_bin), labeller = sig_labeller) +
+  geom_hline(yintercept = 0, color = "black") + # darken the axes
+  geom_vline(xintercept = 0, color = "black") + 
+  ggtitle("Posterior vs. prior: by signal")
+  # theme(
+  #   axis.title.y = "prior"
+  # )
+  labs(x = "prior (log odds)", 
+       y = "posterior (log odds)",
+      title = "Posterior vs. prior: by signal") 
+
+#save_fig(fig = pvp_1, filename = "pvp_1.png")
+
+# Adds a line where y=signal (-0.69 or 0.69)
+pvp_1+ geom_abline(slope=1, intercept = -0.69) + geom_abline(slope=1, intercept=0.69, colour='orange')
+
+# Add Polarity
+pvp_2 <- pvp_1 +
+  geom_rect(data = data.frame('signal_bin' = 0.693), 
+            aes(xmin = 0, xmax = Inf, ymin = -Inf, ymax = Inf), 
+            alpha = 0.25, fill=neg_fill, inherit.aes = FALSE) +
+  geom_rect(data = data.frame('signal_bin' = -0.693), 
+            aes(xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf), 
+            alpha = 0.25, fill=neg_fill, inherit.aes = FALSE)
+
+#save_fig(fig = pvp_2, filename = "pvp_2.png")
+
+
+# Add the Bayesian benchmark
+pvp_3 <- pvp_2 +
+  geom_line(aes(y = bayes_post), 
+            color = "black", linetype = "dashed", size = 0.75)
+#save_fig(fig = pvp_3, filename = "pvp_3.png")
+
+# Add jitter points & fit
+pvp_4 <- pvp_3 +
+  geom_jitter(alpha = 0.1) +
+  my_smooth
+#save_fig(fig = pvp_4, filename = "pvp_4.png")
+
+# Add concordance
+
+pvp_5 <- pvp_4 + 
+  scale_color_manual(values = br) + 
+  scale_fill_manual(values = br) +
+  aes(color = concordance, fill = concordance) +
+  no_legend_title()
+
+pvp_5
+
+```
+
+```{r fig2b}
+
+# Add annotations. UNUSED.
+# 
+# ann_text_left <- data.frame(label = c("Polarity: +1", "Polarity: -1"),
+#                        signal_bin = c("-0.693", "0.693"),
+#                        x = c(-3, -3),
+#                        y = c(5, 5))
+# 
+# ann_text_right <- data.frame(label = c("Polarity: -1", "Polarity: +1"),
+#                        signal_bin = c("-0.693", "0.693"),
+#                        x = c(2, 2),
+#                        y = c(5, 5))
+# 
+# ann_layer_left <- geom_text(data = ann_text_left, mapping = aes(x=x, y=y, label=label))
+# ann_layer_right <- geom_text(data = ann_text_right, mapping = aes(x=x, y=y, label=label))
+# 
+# fig2 <- fig2 + ann_layer_left + ann_layer_right
+```
+
+```{r fig3}
+# Rotate clockwise by pi to take polarity out of the equation; then, 
+# plot the prior & posterior, split by signal & CRT.
+
+s1_rotated <- s1_data %>%
+  mutate(prior = ifelse(signal > 0, prior, -prior),
+         post = ifelse(signal > 0, post,  -post),
+         signal = abs(signal),
+         bayes_post = prior + signal,
+         crt_bin = bin2fac(crt_score < 4, "low", "high"))
+
+# Note: using either the default geom_smooth() or Loess, we get an upwards curve
+# for dis-confirming signals, SE ~ 1 (concordant), and disc-conc ~ 2
+
+fig4 <- s1_rotated %>%
+  ggplot(aes(x = prior, y = post, color = concordance, fill = concordance)) +
+  geom_line(aes(y = bayes_post), color = "black", linetype = "dashed", size = 0.75) +
+  geom_jitter(alpha = 0.1) +
+  scale_color_manual(values = br) + 
+  scale_fill_manual(values = br) +
+  geom_hline(yintercept = 0, color = "darkgrey") +
+  geom_vline(xintercept = 0, color = "darkgrey") +
+  labs(x = "prior (log odds)", 
+       y = "posterior (log odds)", 
+       title = "Posterior vs. Prior: by signal, concordance and CRT") + 
+  my_smooth + 
+  facet_grid(cols = vars(signal_bin), rows = vars(crt_bin), switch = "y", 
+             labeller = labeller(.cols = my_labeller, .rows = label_both)) +
+  no_legend_title()
+
+print(fig4)
+ggsave("fig4.png")
+```
+
+
+```{r models}
+library(lme4)
+library(modelr)
+library(stargazer)
+
+s1_data = s1_data %>% filter(polarity != "neutral")
+s1_data$polarity = droplevels(s1_data$polarity)
+s1_data$st_id = factor(s1_data$st_id)
+
+
+s1_norm <- s1_data %>% mutate(
+  post = post / abs(signal),
+  prior = prior / abs(signal),
+  deviation = deviation / abs(signal),
+  signal = signal / abs(signal)
+)
+
+
+# Baseline
+f_base <- post ~ prior*polarity*concordance 
+f_fe <- post ~ prior*polarity*concordance + st_id
+f_crt <- post ~ prior*polarity*concordance*crt_score
+
+baseline <- lm(f_base, data = s1_norm)
+capped <- lm(f_base, data = s1_norm %>% filter(!capped))
+
+stargazer(baseline, capped, type = "text")
+
+```
+
+```{r preds}
+crt <- lm(f_crt, data = s1_norm)
+
+pols = c("confirming", "opposing")
+cons = c("concordant", "discordant")
+crt_scores = seq(0, 7)
+pred_c = expand_grid(pols, cons, crt_scores)
+names(pred_c) = c("polarity", "concordance", "crt_score")
+pred_c$prior = 0
+pred_c$C = predict(crt, newdata = pred_c)
+
+fig_crt = pred_c %>% filter(polarity == "oppsing") %>% ggplot(aes(x=crt_score, y=C, color = concordance, fill = concordance))  
+  + geom_line()
+
+#save_fig(fig = fig_crt, filename = "pred_c.png")
+
+
+pris = seq(0,3,by=0.5)
+pred_d = expand_grid(pols, cons, crt_scores, pris)
+names(pred_d) = c("polarity", "concordance", "crt_score", "prior")
+pred_d$D = predict(crt, newdata = pred_d)
+
+
+fig_drt = pred_c %>% ggplot(aes(x=crt_score, y=C, color = concordance, fill = concordance)) + 
+  facet_wrap(facets = vars(polarity)) + geom_line()
+
+# save_fig(fig = fig_drt, filename = "pred_d.png")
+
+
+# Model 3,4: Redo m1, m2 but with rotated data
+# m3 <- lm(f_base, data = s1_rotated)
+# summary(m3)
+
+# m4 <- lm(f_base_nc, data=s1_rotated)
+# summary(m4)
+
+
+# Model 5: base, with normalized data
+m5 <- lm(f_base , data=s1_norm)
+
+# print summary of model 5 
+# summary(m5)
+
+newpriors = seq(10,90,5)
+pcon = factor(x = rep("concordant",17), levels = lbl.conc)
+ncon = factor(x = rep("discordant",17), levels = lbl.conc)
+pol = factor(append(rep("opposing", 8), rep("confirming", 9)), levels = lbl.pol)
+newsig = c(rep(0.67,17))
+
+
+nd1 = data.frame(prior= newpriors, concordance= pcon, signal= newsig, polarity=pol)
+nd2 = data.frame(prior= newpriors, concordance= ncon, signal= newsig, polarity=pol)
+nf1 = round(boot::inv.logit( predict(m5, newdata=nd1)), 3)
+nf2 = round(boot::inv.logit( predict(m5, newdata=nd2)), 3)
+
+bp = newpriors/100 + newsig
+results_pos = data.frame(prior= newpriors, concordance= pcon, polarity=pol, fitted_posterior= nf1, bayes_posterior= round(boot::inv.logit(bp),3))
+results_neg = data.frame(prior= newpriors, concordance= ncon, polarity=pol, fitted_posterior= nf1, bayes_posterior= round(boot::inv.logit(bp),3))
+
+# print summary of results for positive connotation or negative connotation
+# summary(results_pos)
+# summary(results_neg)
+
+# 16 terms
+# summary(lm(post_norm ~ pri_norm*polarity*concordance*crt_score, data=s1_data))
+
+```

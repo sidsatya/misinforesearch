@@ -1,12 +1,13 @@
 ---
 title: "simple_networks_nb"
+author: Sid Satya
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_chunk$set(echo = TRUE)
 library('igraph')
 library('animation')
 library("roxygen2")
@@ -19,13 +20,17 @@ DEFAULT_POSTERIOR = 0.5
 ```
 
 ## Description
-This is a library of functions used for analysis in the Misinformation Research Project! We have functionality added for the following types of networks: 
-1. Bipartite
-2. Diamond
-3. Spade 
-4. Cycle
-5. Pair
-6. Funnel (Working on it!) 
+This is a library of functions used for analysis in the Misinformation Research Project! We have functionality added for the following types of networks:
+\begin{enumerate}
+  \item Bipartite
+  \item Diamond
+  \item Spade
+  \item Cycle
+  \item Pair
+\end{enumerate}
+
+Furthermore, we have added code that will update the networks above based on the prior and posterior beliefs of each node, as well as a method to simulate
+the updating over several rounds. 
 
 Examples are shown below.
 
@@ -388,8 +393,7 @@ update_posterior_pull <- function(g, node) {
     return(g)
   } 
   
-  # for some reason, this function will return the node we are looking at at its head
-  # so we want to filter out the head node
+  # so want to filter out the head node first
   nbrs <- nbrs[2:length(nbrs)]
   # calculate mean posterior of neighbors 
   mean_nbr_posterior = 0 
@@ -497,11 +501,28 @@ V(g)$posterior
 ```
 
 ```{r animation} 
-#TODO: switch to a relative path from Dropbox root
+#NOTE: will need to switch to personal or relative path if attempting to replicate code
 ani.options(convert="/Users/sidsatya/Desktop/Berkeley/senior year/Misinfo/ImageMagick-7.0.10/convert.exe")
 
-#TODO: add documentation here, also more work needed on cleaner animations
-simulate_and_animate <- function(net, num_rounds, num_sims, is_bipartite=FALSE) { 
+
+#' Simulates and animates nodes within a network updating their beliefs.   
+#' 
+#' @description
+#' Take in a graph object, the number of rounds of updating, and the number of 
+#' simulations and creates an animation of each node in the network propogating
+#' beliefs to each other based on their prior and posterior probabilities. 
+#' 
+#' @param net An igraph object containing the nodes and edges of the graph of 
+#'  interest. 
+#' @param num_rounds Int, The number of rounds of updating.  
+#' @param num_sims 
+#' @param is_bipartite Boolean, true if the igraph object passed in is a 
+#' bipartite graph and false otherwise. Default values is false. 
+#' 
+#' @return An igraph object containing the nodes and edges with updated
+#'  posterior values as well as a saved image-by-image GIF of the animation. 
+
+simulate_and_animate <- function(net, num_rounds, is_bipartite=FALSE) { 
   saveGIF( {  
             col <- rep("grey40", vcount(net))
             
@@ -513,8 +534,10 @@ simulate_and_animate <- function(net, num_rounds, num_sims, is_bipartite=FALSE) 
               plot(net, vertex.color=col)
             }
           
-            
-            colors = c("#ff5100", "#ff9d00", "#ffdd1f", "#f8859b", "#7add1f", "#3e517f", "#9c517f")
+            # adding colors for up to 7 rounds. 
+            # will need to update this code to allow for unlimited rounds
+            colors = c("#ff5100", "#ff9d00", "#ffdd1f", "#f8859b", 
+                       "#7add1f", "#3e517f", "#9c517f")
             
             step.1 <- V(net)[round == "R1"]
             col[step.1] <- colors[1]
@@ -528,7 +551,7 @@ simulate_and_animate <- function(net, num_rounds, num_sims, is_bipartite=FALSE) 
             }
         
             # add modulo 
-            for (i in 2:num_sims) {
+            for (i in 2:num_rounds) {
               
               i = i %% num_rounds
               
@@ -554,8 +577,6 @@ simulate_and_animate <- function(net, num_rounds, num_sims, is_bipartite=FALSE) 
               for (j in 1:length(step.i)) { 
                 net <- update_posterior_pull(net, V(net)[step.i[j]])
               }
-              
-              #print(V(net)$posterior)
             }
             
   }, interval = .8, movie.name="network_animation.gif" )
@@ -564,9 +585,10 @@ simulate_and_animate <- function(net, num_rounds, num_sims, is_bipartite=FALSE) 
   #detach('package:animation')
   return(net)
 }
+```
 
-
-# test for simulating! 
+``` {r animation_example}
+# example for simulating! 
 rd1 = c("A", "B", "C", "D", "E")
 rd2 = c("F", "G", "H", "I", "J")
 net <- bipartite(rd1, rd2, make_complete=TRUE)
@@ -576,8 +598,8 @@ V(net)["A"]$posterior = 0.1
 V(net)["B"]$posterior = 0.2
 V(net)["C"]$posterior = 0.3
 V(net)["D"]$posterior = 0.4
-V(net)$posterior
+V(net)$posterior # original posteriors
 
-net <- simulate_and_animate(net, 2, 2, is_bipartite=TRUE)
-V(net)$posterior
+net <- simulate_and_animate(net, 2, is_bipartite=TRUE)
+V(net)$posterior # updated posteriors
 ```

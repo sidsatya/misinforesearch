@@ -10,3 +10,8 @@ The code in this repository contains the work I did in assisting Economics PhD c
 5. Pair 
 
 These functions can be used to build off of each other and the function `simulate_and_animate` takes in a graph object and simulates how agents share information (through highlighting) for upto 5 different rounds of information sharing. 
+
+
+# TPN Analysis and Presentation Figures
+
+This repository also contains code that I co-wrote with undergraduate research assistants Divyansh Saxena and Michael Navruzyan, with the guidance of Jimmy Narang. I assisted with creating the plots shown in the R notebook, `TPN_analysis_plots.Rmd` as well as the regression tables and figures. The files in the `Presentation Figs` directory contains the plots that I created that were used for presentations. 
